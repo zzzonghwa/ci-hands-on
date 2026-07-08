@@ -1,5 +1,12 @@
 """CI 실습용 최소 예제. 외부 의존성 없는 순수 함수 3개."""
 
+from itertools import batched  # 주의: batched는 Python 3.12에서 추가됨 → 3.11에선 ImportError
+
+
+def chunk(items, size):
+    """리스트를 size 크기 조각들로 나눈다. 예: chunk([1,2,3,4,5], 2) -> [[1,2],[3,4],[5]]"""
+    return [list(b) for b in batched(items, size)]
+
 
 def add(a, b):
     """두 수의 합을 반환한다."""
