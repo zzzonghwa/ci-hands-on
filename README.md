@@ -315,3 +315,49 @@ gh pr create --base main --head feature/multiply --title "..." --body "..."
 
 **정리 실무**: 머지 후 로컬·원격 feature 브랜치 삭제(`git branch -d`, `git push origin --delete`, `git fetch --prune`). `gh pr merge --delete-branch`가 원격을 못 지우는 경우가 있어 확인 필요.
 
+### 매트릭스 빌드 + 집계 게이트 (여러 버전 병렬 테스트)
+
+**목적**: 한 잡을 값마다 복제해 병렬 실행 → "한 버전에서만 나는 버그"를 잡는다.
+```yaml
+strategy:
+  fail-fast: false            # 한 버전 실패해도 나머지 끝까지 (전체 그림 확보)
+  matrix:
+    python-version: ["3.11", "3.12", "3.13"]
+runs-on: ubuntu-latest
+steps:
+  - uses: actions/setup-python@v6
+    with:
+      python-version: ${{ matrix.python-version }}   # 매트릭스 값 주입
+# → test (3.11), test (3.12), test (3.13) 3개 잡이 동시에 돈다.
+```
+
+**함정: 매트릭스가 브랜치 보호를 깨뜨린다**
+- 잡을 매트릭스로 바꾸면 체크 이름이 `test` → `test (3.11)`처럼 갈라짐.
+- 브랜치 보호는 여전히 `test`를 기다림 → **모두 초록불이어도 영원히 BLOCKED**(required check 유령).
+
+**해결: 이름 고정된 집계 게이트 잡을 필수 체크로**
+```yaml
+ci-success:
+  needs: test        # 매트릭스 전체가 끝나야 실행
+  if: always()       # 매트릭스가 실패해도 반드시 돌아 결과 판정(skip돼 pending 걸리는 것 방지)
+  runs-on: ubuntu-latest
+  steps:
+    - run: '[ "${{ needs.test.result }}" = "success" ] || exit 1'
+```
+그리고 브랜치 보호 필수 체크를 `test` → `ci-success`로 변경:
+```bash
+# protection.json의 contexts를 ["ci-success"]로 바꿔 다시 PUT
+gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input /tmp/protection.json
+```
+→ 매트릭스가 3개든 30개든 브랜치 보호는 `ci-success` 하나만 보면 된다.
+
+**버전별 실패 시연 (green→red→green)**
+`itertools.batched`(Python 3.12+ 전용)를 쓰는 `chunk` 함수를 추가 → 매트릭스로 확인:
+1. 1차: **3개 전부 실패** — 원인은 batched가 아니라 **black 포맷**(새 코드가 88자 초과). 포맷 게이트가 앞에서 막아 버전 버그가 안 드러남. → **게이트가 여러 겹이면 가장 앞 게이트부터 통과시켜야 다음이 보인다.**
+2. 포맷 수정 후: **`test (3.11)`만 실패** — `ImportError: cannot import name 'batched' from 'itertools'`. 3.12/3.13은 통과. → 매트릭스가 버전 버그를 정확히 격리.
+3. `islice`로 전 버전 호환 구현으로 교체 → **3개 전부 통과** → 머지.
+
+**실무 교훈**: `itertools.batched`처럼 **버전 전용 API**를 쓰면 지원 선언한 하위 버전에서 깨진다. 해결 = 매트릭스에서 그 버전 제외(지원 포기) 또는 이식성 있게 구현.
+
+> 참고: 위 "브랜치 보호" 절의 예시 `contexts: ["test"]`는 매트릭스 도입 후 `["ci-success"]`로 바뀐다.
+
