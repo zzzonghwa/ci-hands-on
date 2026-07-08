@@ -3,7 +3,7 @@
 
 def add(a, b):
     """두 수의 합을 반환한다."""
-    return a + b
+    return a - b
 
 
 def is_even(n):
