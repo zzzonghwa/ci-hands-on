@@ -1,5 +1,20 @@
 """CI 실습용 최소 예제. 외부 의존성 없는 순수 함수 3개."""
 
+# itertools.batched는 Python 3.12+ 전용이라, 3.11도 지원하려고 islice로 직접 구현한다.
+from itertools import islice
+
+
+def _batched(iterable, size):
+    """iterable을 size 크기 튜플들로 끊어 내보낸다 (전 버전 호환)."""
+    it = iter(iterable)
+    while group := tuple(islice(it, size)):
+        yield group
+
+
+def chunk(items, size):
+    """리스트를 size 크기 조각들로 나눈다. 예: chunk([1,2,3,4,5], 2) -> [[1,2],[3,4],[5]]"""
+    return [list(b) for b in _batched(items, size)]
+
 
 def add(a, b):
     """두 수의 합을 반환한다."""
