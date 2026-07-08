@@ -50,19 +50,65 @@ jobs:
       - name: Test + coverage gate
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
 
+  # ── Docker 아티팩트: 딱 1번 빌드해서 레지스트리에 올린다 ──
+  docker-build:
+    needs: test # 테스트(매트릭스 전체) 통과한 코드만 이미지로 굽는다.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # GHCR(GitHub Container Registry)에 push하려면 필요.
+    steps:
+      - uses: actions/checkout@v7
+      # GHCR 로그인. 별도 시크릿 없이 워크플로 기본 토큰(GITHUB_TOKEN)으로 인증한다.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 아티팩트를 "딱 1번" 빌드하고 커밋 SHA로 태깅해 올린다. SHA 태그 = 이 커밋의 유일한 아티팩트 주소.
+      - name: Build & push image (SHA 태그)
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+  # ── 스모크 테스트: 위에서 만든 "바로 그 이미지"를 받아 실행한다 ──
+  docker-smoke:
+    needs: docker-build # build 잡이 끝나야 실행.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 새로 빌드하지 않는다. build 잡이 만든 그 아티팩트를 SHA로 pull해 실행 = "테스트한 것 = 배포할 것" 보장.
+      - name: Pull & run the exact image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE"
+
   # ── 집계 게이트 잡 ──
   # 문제: 매트릭스로 바꾸면 체크 이름이 "test (3.11)"처럼 갈라져, 브랜치 보호가 가리키던 단일 이름 "test"가 사라진다.
-  # 해결: 이름이 고정된 이 잡 하나를 브랜치 보호의 필수 체크로 삼는다. 매트릭스가 몇 개로 늘든 보호 규칙은 안 건드려도 된다.
+  # 해결: 이름이 고정된 이 잡 하나를 브랜치 보호의 필수 체크로 삼는다. 잡이 몇 개로 늘든 보호 규칙은 안 건드려도 된다.
   ci-success:
-    needs: test # 위 매트릭스 잡 전체가 끝나야 실행
-    if: always() # 매트릭스가 실패해도 이 잡은 반드시 돌아서 결과를 판정한다(안 그러면 skip돼 체크가 pending에 걸림).
+    needs: [test, docker-build, docker-smoke] # 세 갈래 전부 끝나야 실행
+    if: always() # 앞 잡이 실패해도 이 잡은 반드시 돌아서 결과를 판정한다(안 그러면 skip돼 체크가 pending에 걸림).
     runs-on: ubuntu-latest
     steps:
-      # 매트릭스 잡의 종합 결과가 success가 아니면 이 게이트를 실패시킨다.
-      - name: Verify all matrix jobs passed
+      # 앞 잡들의 종합 결과가 모두 success가 아니면 이 게이트를 실패시킨다.
+      - name: Verify all jobs passed
         run: |
-          if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "매트릭스 잡 실패 → 게이트 차단"
+          if [ "${{ needs.test.result }}" != "success" ] \
+             || [ "${{ needs.docker-build.result }}" != "success" ] \
+             || [ "${{ needs.docker-smoke.result }}" != "success" ]; then
+            echo "실패한 잡 있음 → 게이트 차단"
             exit 1
           fi
-          echo "모든 매트릭스 잡 통과"
+          echo "모든 잡 통과"
