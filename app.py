@@ -19,3 +19,8 @@ def slugify(text):
 def shout(text):
     """문자열을 대문자로 바꾸고 느낌표를 붙인다. (일부러 테스트를 안 붙임)"""
     return text.upper() + "!"
+
+
+def multiply(a, b):
+    """두 수의 곱을 반환한다."""
+    return a * b

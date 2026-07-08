@@ -4,7 +4,7 @@
 - 로컬에서는 pytest 없이 `python3 test_app.py`로도 실행된다 (__main__ 블록).
 """
 
-from app import add, is_even, slugify, shout
+from app import add, is_even, slugify, shout, multiply
 
 
 def test_add():
@@ -27,9 +27,15 @@ def test_shout():
     assert shout("CI works") == "CI WORKS!"
 
 
+def test_multiply():
+    assert multiply(2, 3) == 6
+    assert multiply(-2, 3) == -6
+
+
 if __name__ == "__main__":
     test_add()
     test_is_even()
     test_slugify()
     test_shout()
-    print("OK: 4개 테스트 모두 통과")
+    test_multiply()
+    print("OK: 5개 테스트 모두 통과")
