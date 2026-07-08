@@ -177,7 +177,7 @@ gh secret set CLAUDE_CODE_OAUTH_TOKEN
 
 ### 가장 쉬운 설치법
 
-Claude Code 터미널에서 아래를 실행하면 GitHub App 설치, 워크플로 파일 추가, 시크릿 등록을 대화식으로 안내한다 (저장소 admin 권한 필요).
+Claude Code 터미널에서 아래를 실행하면 GitHub **ㅠ**App 설치, 워크플로 파일 추가, 시크릿 등록을 대화식으로 안내한다 (저장소 admin 권한 필요).
 
 ```
 /install-github-app
@@ -236,4 +236,37 @@ jobs:
 - 푸시 후 Actions 탭에서 초록불 확인
 - 일부러 깨뜨려 빨간불 확인 후 원복
 - (선택) `@claude` 멘션으로 AI 리뷰 응답 확인
+
+## 확장 실습 기록 (2026-07-08)
+
+기본 실습(테스트만) 위에 얹은 것들. 커밋 히스토리에 green→red→green으로 남아 있다.
+
+### 실습에서 실제로 걸린 함정: 브랜치 이름 불일치
+- `gh repo create`가 기본 브랜치를 `master`로 만들었는데 워크플로는 `branches: [main]`만 트리거 → **CI가 조용히 안 도는** 상태(초록불도 빨간불도 안 뜸).
+- 해결: `git branch -M main` + `gh repo edit --default-branch main` + 원격 master 삭제.
+- **교훈: 워크플로 트리거 브랜치와 실제 기본 브랜치 이름이 반드시 일치해야 한다.**
+
+### 품질 게이트 추가 (lint + format + coverage)
+파이프라인 단계: `checkout → setup-python → install deps → [ruff] → [black] → [pytest+coverage]`
+- `ruff check .` = lint(코드 스멜), `black --check .` = 포맷 검사, `pytest --cov=app --cov-fail-under=100` = 커버리지 임계값.
+- **하나라도 실패하면 잡 전체가 빨간불** = 게이트.
+
+**핵심 시연: 테스트 통과 ≠ 품질 게이트 통과.**
+테스트 안 붙인 `shout` 함수를 추가했더니 → `3 passed`(테스트는 통과)인데 `Coverage failure: 88 < 100`으로 **게이트가 차단**. 테스트만 봤다면 초록불로 새 코드가 몰래 들어왔을 것. 해결 = 되돌리기가 아니라 **테스트를 붙이는 것**(게이트가 원하는 대로) → 100% 회복.
+
+### requirements-dev.txt = "설치 선언서"이지 "검사"가 아니다
+- `requirements-dev.txt` = 필요한 도구 **목록(선언)**. 그 자체는 아무것도 검사 안 함.
+- `pip install -r requirements-dev.txt` = CI 러너(매번 깨끗한 빈 우분투)에 그 목록대로 **환경 준비(설치)**.
+- 실제 **검사**는 그 다음 `ruff`/`black`/`pytest` 단계가 한다. 순서 = **준비(설치) → 검사**.
+- 두 종류: `requirements.txt`(앱 런타임 의존성, 프로덕션 포함) vs `requirements-dev.txt`(개발·CI 도구, 프로덕션 제외).
+
+### 재현성(reproducibility) — 버전 고정
+- 지금 목록은 버전 미고정(`ruff`만) → 최신 설치. **오늘 통과한 CI가 내일 도구 새 버전 때문에 갑자기 깨질 수 있다.**
+- 실무: `ruff==0.x.y`처럼 **버전을 못박아(pin)** "매번 정확히 같은 도구" 보장 = lockfile의 존재 이유.
+
+### 장난감이 숨긴 실전 복잡도 (CI가 쉬워 보이는 이유)
+개념(커밋마다 자동 테스트)은 쉽고, 어려운 건 **규모에서 빠르게·안정적으로·신뢰성 있게 유지**하기다.
+- 테스트 수천~수만 개 → "수 분 내 피드백"이 엔지니어링 문제(분할·병렬·shard·영향받은 것만).
+- **플레이키 테스트**(랜덤 실패)로 CI 신뢰 붕괴.
+- 캐싱·lockfile·매트릭스 빌드(OS×언어버전)·아티팩트 1회 빌드·service container 통합 테스트·보안 스캔·브랜치 보호.
 
