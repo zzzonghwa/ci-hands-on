@@ -17,7 +17,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install pytest
-        run: pip install pytest
-      - name: Run tests
-        run: pytest
+      - name: Install dev deps
+        run: pip install -r requirements-dev.txt
+      # --- 품질 게이트: 하나라도 실패하면 잡 전체가 빨간불 ---
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Format check (black)
+        run: black --check .
+      - name: Test + coverage gate
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
