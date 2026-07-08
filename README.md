@@ -270,3 +270,48 @@ jobs:
 - **플레이키 테스트**(랜덤 실패)로 CI 신뢰 붕괴.
 - 캐싱·lockfile·매트릭스 빌드(OS×언어버전)·아티팩트 1회 빌드·service container 통합 테스트·보안 스캔·브랜치 보호.
 
+### 브랜치 보호 + PR 플로우 (CI 초록불을 머지 조건으로 강제)
+
+**목적**: "trunk는 항상 green"을 말이 아니라 **규칙**으로 박는다. CI가 빨간불이면 admin조차 main에 머지 불가.
+
+**적용 방법 (`gh` = GitHub 설정, CI 파일은 안 건드림):**
+```bash
+cat > /tmp/protection.json <<'JSON'
+{
+  "required_status_checks": { "strict": true, "contexts": ["test"] },
+  "enforce_admins": true,
+  "required_pull_request_reviews": { "required_approving_review_count": 0 },
+  "restrictions": null
+}
+JSON
+gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input /tmp/protection.json
+# 조회: gh api repos/<owner>/<repo>/branches/main/protection
+# 해제: gh api -X DELETE repos/<owner>/<repo>/branches/main/protection
+```
+
+| 필드 | 뜻 |
+|---|---|
+| `required_status_checks.contexts: ["test"]` | 통과해야 할 체크 이름(= ci.yml의 잡 이름 `test`) |
+| `required_status_checks.strict: true` | 브랜치가 main 최신 상태여야 머지 가능 |
+| `enforce_admins: true` | admin도 예외 없음(진짜 차단) |
+| `required_pull_request_reviews.required_approving_review_count: 0` | PR은 필수, 승인은 0개(혼자라 데드락 방지) |
+
+**PR 플로우 시연 (green→red→green):**
+```bash
+git checkout -b feature/multiply
+# multiply 함수 추가 + 테스트에 버그(==5) 심기
+git push -u origin feature/multiply
+gh pr create --base main --head feature/multiply --title "..." --body "..."
+```
+- CI 빨간불 → PR `state: BLOCKED`, `gh pr merge` 시 "base branch policy prohibits the merge".
+- 테스트 버그 수정(==6) 푸시 → CI 초록불 → `state: CLEAN` → `gh pr merge <n> --squash --delete-branch`.
+
+**핵심 구분: CI ≠ 브랜치 보호**
+- **CI**(`.github/workflows/ci.yml`, 저장소 안 코드) = *무엇을* 검사하나. git으로 clone하면 따라옴.
+- **브랜치 보호**(GitHub 저장소 설정, 파일 아님) = 검사 결과를 *머지 조건으로 강제*하나. **git 히스토리에 없어 clone/fork해도 안 따라옴** → 새 저장소마다 다시 설정(또는 조직 ruleset·IaC로 코드화).
+- 둘을 잇는 끈 = 체크 이름 `test` 하나.
+
+**요금 주의**: 브랜치 보호(및 rulesets)는 **public 저장소는 무료**지만 **private + 무료 플랜은 불가**(Pro/Team/Enterprise 필요). 이 실습이 된 건 저장소를 public으로 만들어서다.
+
+**정리 실무**: 머지 후 로컬·원격 feature 브랜치 삭제(`git branch -d`, `git push origin --delete`, `git fetch --prune`). `gh pr merge --delete-branch`가 원격을 못 지우는 경우가 있어 확인 필요.
+
