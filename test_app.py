@@ -28,7 +28,8 @@ def test_shout():
 
 
 def test_multiply():
-    assert multiply(2, 3) == 5  # 버그: 실제로는 6. CI가 잡아야 한다.
+    assert multiply(2, 3) == 6
+    assert multiply(-2, 3) == -6
 
 
 if __name__ == "__main__":
