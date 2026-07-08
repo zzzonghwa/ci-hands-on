@@ -1,0 +1,8 @@
+# 이미지에 넣을 필요 없는 것들 (빌드 컨텍스트에서 제외)
+__pycache__/
+.pytest_cache/
+.github/
+test_app.py
+requirements-dev.txt
+README.md
+.gitignore
