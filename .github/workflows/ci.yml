@@ -1,28 +1,45 @@
+# 워크플로 이름. Actions 탭에 이 이름으로 표시된다.
 name: CI
 
+# ── 언제 이 워크플로를 돌릴까 (트리거) ──
 on:
   push:
-    branches: [main]
+    branches: [main] # main에 푸시될 때
   pull_request:
-    branches: [main]
+    branches: [main] # main을 대상으로 한 PR이 열리거나 갱신될 때
 
+# 워크플로에 주어지는 토큰 권한. 최소 권한 원칙 → 읽기만 허용.
 permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  test: # 잡 이름. 브랜치 보호의 필수 체크(contexts)가 이 이름 "test"를 가리킨다.
+    runs-on: ubuntu-latest # 매 실행마다 새로 뜨는 깨끗한 빈 우분투 러너(=중립 서버)
+    # steps는 위→아래 순서대로 실행되고, 하나라도 실패하면 그 즉시 잡 전체가 빨간불.
     steps:
+      # 1) 저장소 코드를 러너로 내려받는다 (빈 러너엔 코드가 없으므로 항상 첫 단계).
       - uses: actions/checkout@v7
+
+      # 2) 러너에 Python 3.13을 설치한다.
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      # 3) 환경 준비: requirements-dev.txt 목록대로 개발 도구(ruff·black·pytest·pytest-cov) 설치.
+      #    이 단계는 "설치"일 뿐 검사가 아니다. 실제 검사는 아래 4~6단계가 한다.
       - name: Install dev deps
         run: pip install -r requirements-dev.txt
-      # --- 품질 게이트: 하나라도 실패하면 잡 전체가 빨간불 ---
+
+      # ── 품질 게이트 (4~6): 하나라도 실패하면 머지가 막힌다 ──
+      # 4) Lint — 코드 스멜·미사용 변수 등 정적 검사.
       - name: Lint (ruff)
         run: ruff check .
+
+      # 5) Format check — 코드 서식이 black 규칙과 일치하는지 검사(고치지는 않고 확인만).
       - name: Format check (black)
         run: black --check .
+
+      # 6) Test + Coverage gate — 테스트 실행 + 커버리지가 100% 미만이면 실패.
+      #    "테스트 통과"만으론 부족하고, 새 코드에 테스트가 없으면 여기서 잡힌다.
       - name: Test + coverage gate
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
