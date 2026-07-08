@@ -14,3 +14,8 @@ def is_even(n):
 def slugify(text):
     """문자열을 소문자로 바꾸고 공백을 하이픈 1개로 치환한다."""
     return "-".join(text.lower().split())
+
+
+def shout(text):
+    """문자열을 대문자로 바꾸고 느낌표를 붙인다. (일부러 테스트를 안 붙임)"""
+    return text.upper() + "!"
