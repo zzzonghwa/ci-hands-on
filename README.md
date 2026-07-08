@@ -410,3 +410,50 @@ docker-smoke:
 
 **시연 결과**: `docker-smoke` 로그에 `Status: Downloaded ...ci-hands-on:<SHA>` 후 `add(2,3)=5 ...` 출력 → build가 구운 바로 그 이미지가 실행됨을 확인.
 
+### 배포(CD) — 수동 승인 게이트로 Continuous Delivery 완성
+
+**목적**: "Delivery vs Deployment = 마지막 버튼 누가 누르나"를 실제로 구현. 기술 검증은 매 커밋 자동으로 끝내고, **프로덕션 릴리스만 사람이 승인**하게 한다.
+
+**1) production 환경에 필수 승인자 등록** (`gh` = GitHub 설정)
+```bash
+UID_NUM=$(gh api user -q '.id')
+cat > /tmp/env.json <<JSON
+{ "wait_timer": 0,
+  "reviewers": [{ "type": "User", "id": $UID_NUM }],
+  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
+JSON
+gh api -X PUT repos/<owner>/<repo>/environments/production --input /tmp/env.json
+```
+- `reviewers` = 배포 전 승인해야 할 사람. `protected_branches: true` = 보호 브랜치(main)만 배포 가능.
+- 요금 주의: 환경 보호 규칙(required reviewers)도 **public 무료 / private은 Pro+**. (브랜치 보호와 동일)
+
+**2) deploy 잡 추가**
+```yaml
+deploy:
+  needs: [test, docker-build, docker-smoke]        # 검증 다 끝나야 배포 후보
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # PR에선 skip, main 병합 때만
+  environment: production                           # ← 이 한 줄이 수동 승인 게이트를 건다
+  permissions: { packages: write }
+  steps:
+    - uses: docker/login-action@v3 { ghcr 로그인 }
+    # 배포 = 재빌드 없음. 테스트·스모크까지 통과한 SHA 이미지에 :latest 이름표만 붙여 올린다(promote).
+    - run: |
+        SHA_IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+        LATEST=ghcr.io/${{ github.repository }}:latest
+        docker pull "$SHA_IMAGE" && docker tag "$SHA_IMAGE" "$LATEST" && docker push "$LATEST"
+```
+
+**동작 흐름**
+```
+커밋 → [test 3버전] → [docker-build] → [docker-smoke] → 🔵사람 승인 → [deploy=:latest 승격]
+       └────────── 매 커밋 자동 (기술 검증) ──────────┘   └─ 비즈니스 결정 ─┘
+```
+- PR: `deploy`는 skip(조건 false) → 병합 게이트에 영향 없음.
+- main 병합(push): 파이프라인이 돌다가 `deploy`가 `waiting`(승인 대기)로 멈춤 → 웹 UI "Review deployments → Approve and deploy"(또는 `gh api .../pending_deployments -f state=approved`) → 배포 진행.
+
+**시연 결과**: 승인 후 `latest: digest: sha256:...`가 SHA 이미지와 **동일 digest** → `:latest`가 테스트한 바로 그 아티팩트임을 확인. 재빌드 없이 이름표만 바뀜.
+
+**Delivery ↔ Deployment 토글**: `environment: production`을 빼거나 환경의 required reviewer를 제거하면 → 승인 버튼 없이 자동 릴리스 = **Continuous Deployment**. "Deployment ⊃ Delivery"의 그 한 끗.
+
+**경계**: 배포 대상이 실행 중인 서버가 아니라 레지스트리의 `:latest` 태그. 실제 서버 배포면 이 자리에 "그 이미지를 서버/쿠버네티스에 롤아웃"(+ blue-green/canary) 스텝이 붙는다. 파이프라인 구조(검증 → 승인 게이트 → 릴리스)는 동일.
+
