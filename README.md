@@ -361,3 +361,52 @@ gh api -X PUT repos/<owner>/<repo>/branches/main/protection --input /tmp/protect
 
 > 참고: 위 "브랜치 보호" 절의 예시 `contexts: ["test"]`는 매트릭스 도입 후 `["ci-success"]`로 바뀐다.
 
+### Docker 아티팩트 빌드 ("아티팩트 1회 빌드" 실전)
+
+**목적**: 소스를 **어디서나 똑같이 도는 밀봉 상자(이미지)**로 굽고, 그 이미지를 downstream이 그대로 재사용 → "테스트한 것 = 배포할 것"을 보장(이론 2.3).
+
+**개념 잡기**
+- **이미지(image)** = 앱 코드 + 파이썬 + OS 조각을 한 상자에 밀봉한 것 = "밀키트". 어느 서버에 놔도 똑같이 실행 → "내 컴퓨터에선 됐는데" 소멸.
+- **컨테이너(container)** = 그 이미지를 실제로 켜서 돌아가는 것(실행 인스턴스). 하나의 이미지로 컨테이너 여러 개(← canary의 "컨테이너 여러 대")를 찍는다.
+- **레지스트리(GHCR)** = 이미지를 보관하는 공용 냉장고.
+
+**Dockerfile (레시피, 위→아래로 상자를 쌓음)**
+```dockerfile
+FROM python:3.13-slim   # 파이썬 깔린 최소(slim) 상자로 시작. 작을수록 빠르고 보안 표면 작음.
+WORKDIR /app            # 상자 안 작업 폴더를 /app으로.
+COPY app.py main.py ./  # 내 코드를 상자에 넣어 밀봉(.dockerignore로 테스트·CI 파일 제외).
+ENTRYPOINT ["python", "main.py"]  # 컨테이너가 뜨면 이 명령 실행.
+```
+- 각 줄 = 한 겹(layer). 안 바뀐 겹은 캐시됨 → 잘 안 바뀌는 것(의존성) 위, 자주 바뀌는 것(코드 COPY) 아래에 두면 재빌드가 빠르다.
+
+**워크플로 구조 (test → build → smoke → 집계)**
+```yaml
+docker-build:
+  needs: test                      # 테스트 통과한 코드만 이미지로 굽는다
+  permissions: { packages: write } # GHCR push 권한
+  steps:
+    - uses: docker/login-action@v3  # GITHUB_TOKEN으로 GHCR 로그인(별도 시크릿 불필요)
+      with: { registry: ghcr.io, username: ${{ github.actor }}, password: ${{ secrets.GITHUB_TOKEN }} }
+    - run: |                        # 딱 1번 빌드 + 커밋 SHA로 태깅해 push
+        IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+        docker build -t "$IMAGE" . && docker push "$IMAGE"
+
+docker-smoke:
+  needs: docker-build
+  steps:
+    - uses: docker/login-action@v3 { ... }
+    - run: |                        # 새로 빌드 안 함 — build가 올린 그 SHA 이미지를 pull해 실행
+        IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
+        docker pull "$IMAGE" && docker run --rm "$IMAGE"
+```
+그리고 `ci-success`의 `needs`를 `[test, docker-build, docker-smoke]`로 확장 → 셋 다 통과해야 머지.
+
+**왜 build와 smoke를 나누나**: 만들어지는 것(build) ≠ 도는 것(smoke). 이미지는 잘 포장됐는데 실행하니 즉시 죽을 수 있다(경로 오류 등). 단위 테스트가 못 보는 **패키징·런타임 층위**를 smoke가 검증.
+
+**핵심 포인트**
+- **SHA 태그** = 커밋의 유일한 아티팩트 주소. `:latest`가 아니라 SHA로 태깅해야 downstream이 "정확히 이 커밋의 이미지"를 집는다.
+- **스모크 테스트** = "일단 뜨고 기본 동작은 하나" 최소 확인(어원: 전원 켜고 연기 나나 보기).
+- **경계**: 이 워크플로는 CI + 아티팩트 빌드까지. 그 이미지를 프로덕션에 올리는 **CD(배포) 잡은 아직 없음** = Continuous Delivery의 앞부분(빌드·검증)까지.
+
+**시연 결과**: `docker-smoke` 로그에 `Status: Downloaded ...ci-hands-on:<SHA>` 후 `add(2,3)=5 ...` 출력 → build가 구운 바로 그 이미지가 실행됨을 확인.
+
