@@ -13,24 +13,31 @@ permissions:
   contents: read
 
 jobs:
-  test: # 잡 이름. 브랜치 보호의 필수 체크(contexts)가 이 이름 "test"를 가리킨다.
+  test:
+    # ── 매트릭스 빌드: 아래 값마다 잡을 하나씩 병렬 생성 ──
+    # python-version 3개 → test (3.11), test (3.12), test (3.13) 3개 잡이 동시에 돈다.
+    # "한 버전에서만 나는 버그"를 잡는 게 목적.
+    strategy:
+      fail-fast: false # 한 버전이 실패해도 나머지는 끝까지 돌려 전체 그림을 본다(기본값 true면 하나 깨질 때 나머지 취소).
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     runs-on: ubuntu-latest # 매 실행마다 새로 뜨는 깨끗한 빈 우분투 러너(=중립 서버)
     # steps는 위→아래 순서대로 실행되고, 하나라도 실패하면 그 즉시 잡 전체가 빨간불.
     steps:
       # 1) 저장소 코드를 러너로 내려받는다 (빈 러너엔 코드가 없으므로 항상 첫 단계).
       - uses: actions/checkout@v7
 
-      # 2) 러너에 Python 3.13을 설치한다.
+      # 2) 러너에 Python을 설치한다. 버전은 매트릭스 값을 주입(${{ matrix.python-version }}).
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       # 3) 환경 준비: requirements-dev.txt 목록대로 개발 도구(ruff·black·pytest·pytest-cov) 설치.
       #    이 단계는 "설치"일 뿐 검사가 아니다. 실제 검사는 아래 4~6단계가 한다.
       - name: Install dev deps
         run: pip install -r requirements-dev.txt
 
-      # ── 품질 게이트 (4~6): 하나라도 실패하면 머지가 막힌다 ──
+      # ── 품질 게이트 (4~6): 하나라도 실패하면 이 잡이 빨간불 ──
       # 4) Lint — 코드 스멜·미사용 변수 등 정적 검사.
       - name: Lint (ruff)
         run: ruff check .
@@ -40,6 +47,22 @@ jobs:
         run: black --check .
 
       # 6) Test + Coverage gate — 테스트 실행 + 커버리지가 100% 미만이면 실패.
-      #    "테스트 통과"만으론 부족하고, 새 코드에 테스트가 없으면 여기서 잡힌다.
       - name: Test + coverage gate
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
+
+  # ── 집계 게이트 잡 ──
+  # 문제: 매트릭스로 바꾸면 체크 이름이 "test (3.11)"처럼 갈라져, 브랜치 보호가 가리키던 단일 이름 "test"가 사라진다.
+  # 해결: 이름이 고정된 이 잡 하나를 브랜치 보호의 필수 체크로 삼는다. 매트릭스가 몇 개로 늘든 보호 규칙은 안 건드려도 된다.
+  ci-success:
+    needs: test # 위 매트릭스 잡 전체가 끝나야 실행
+    if: always() # 매트릭스가 실패해도 이 잡은 반드시 돌아서 결과를 판정한다(안 그러면 skip돼 체크가 pending에 걸림).
+    runs-on: ubuntu-latest
+    steps:
+      # 매트릭스 잡의 종합 결과가 success가 아니면 이 게이트를 실패시킨다.
+      - name: Verify all matrix jobs passed
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "매트릭스 잡 실패 → 게이트 차단"
+            exit 1
+          fi
+          echo "모든 매트릭스 잡 통과"
