@@ -1,6 +1,7 @@
 """CI 실습용 최소 예제. 외부 의존성 없는 순수 함수 3개."""
 
-from itertools import batched  # 주의: batched는 Python 3.12에서 추가됨 → 3.11에선 ImportError
+# 주의: batched는 Python 3.12에서 추가됨 → 3.11에선 ImportError로 깨진다.
+from itertools import batched
 
 
 def chunk(items, size):
