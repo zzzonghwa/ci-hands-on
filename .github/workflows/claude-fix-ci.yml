@@ -21,9 +21,13 @@ permissions:
 
 jobs:
   fix:
+    # fork 가드(3번째 조건): workflow_run은 base 저장소 컨텍스트(쓰기 권한+시크릿)로 돈다.
+    # fork PR의 실패 로그는 비신뢰 입력 = 프롬프트 인젝션 벡터이므로, 같은 저장소 브랜치만 수리한다.
+    # (AI 리뷰 티어1 지적을 반영 — PR #20 리뷰 코멘트 참고)
     if: >
       github.event.workflow_run.conclusion == 'failure' &&
-      github.event.workflow_run.head_branch != 'main'
+      github.event.workflow_run.head_branch != 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
