@@ -1,0 +1,26 @@
+# ── 계층 3: SAST (노트 03) ──
+# 결정론적 정적 분석. AI 코드의 인젝션류 결함(Veracode 45%) 담당.
+# 같은 모델 자기검증 금지(원리 3)의 대응: AI 리뷰가 아니라 이 결정론적 게이트가 차단 권한을 가진다.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write # 분석 결과(SARIF)를 code scanning에 업로드하려면 필요.
+  actions: read
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-and-quality # 기본(security)보다 넓은 쿼리 스위트.
+      - uses: github/codeql-action/analyze@v3
