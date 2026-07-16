@@ -8,9 +8,9 @@ on:
   pull_request:
     branches: [main] # main을 대상으로 한 PR이 열리거나 갱신될 때
 
-# 워크플로에 주어지는 토큰 권한. 최소 권한 원칙 → 읽기만 허용.
+# 워크플로에 주어지는 토큰 권한.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   # ── 계층 1: 시크릿 스캐닝 (노트 03) ──
