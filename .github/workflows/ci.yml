@@ -109,6 +109,8 @@ jobs:
     permissions:
       contents: read
       packages: write # GHCR(GitHub Container Registry)에 push하려면 필요.
+      id-token: write # OIDC 토큰으로 서명 주체(이 워크플로)를 증명.
+      attestations: write # attestation 저장.
     steps:
       - uses: actions/checkout@v7
       # GHCR 로그인. 별도 시크릿 없이 워크플로 기본 토큰(GITHUB_TOKEN)으로 인증한다.
@@ -120,10 +122,23 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # 아티팩트를 "딱 1번" 빌드하고 커밋 SHA로 태깅해 올린다. SHA 태그 = 이 커밋의 유일한 아티팩트 주소.
       - name: Build & push image (SHA 태그)
+        id: push
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" | cut -d@ -f2)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # ── provenance attestation (노트 03) ──
+      # "이 이미지는 이 저장소의 이 워크플로가 이 커밋에서 만들었다"를 서명으로 남긴다.
+      # 에이전트가 만드는 아티팩트가 늘수록, 출처 증명은 사람 기억이 아니라 서명이어야 한다.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
   # ── 스모크 테스트: 위에서 만든 "바로 그 이미지"를 받아 실행한다 ──
   docker-smoke:
@@ -190,6 +205,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # 배포 게이트: attestation이 검증되지 않는 이미지는 promote하지 않는다.
+      # "테스트한 것 = 배포할 것"에 "우리 파이프라인이 만든 것"이라는 서명 검증을 더한다.
+      - name: Verify provenance (배포 게이트)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify \
+            oci://ghcr.io/${{ github.repository }}:${{ github.sha }} \
+            --repo ${{ github.repository }}
+
       # 배포 = 새로 빌드하지 않는다. 이미 테스트·스모크까지 통과한 그 SHA 이미지에
       # :latest 이름표만 붙여 올린다(promote). = "테스트한 바로 그 아티팩트를 릴리스".
       - name: Promote tested image to :latest (릴리스)
