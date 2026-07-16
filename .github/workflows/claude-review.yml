@@ -35,3 +35,7 @@ jobs:
             2) 로직 결함·엣지 케이스·보안 문제를 짚되, 확실한 것만. 스타일 지적은 하지 않는다
                (ruff·black이 이미 게이트에 있다).
             3) 이 리뷰는 논블로킹 1차 필터다. 판단 근거를 짧게 남겨라.
+            코멘트 게시는 `gh pr comment ${{ github.event.pull_request.number }} --body "..."` 를 사용하라.
+          # 에이전트가 쓸 수 있는 도구를 명시 허용한다(최소 권한). 없으면 코멘트 게시가 거부된다.
+          claude_args: |
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr view:*),Bash(gh pr diff:*),Read,Glob,Grep"
