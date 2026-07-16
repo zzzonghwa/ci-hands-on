@@ -1,0 +1,5 @@
+# mutmut(뮤테이션 테스트) 설정 — 노트 03 계층 4.
+# 커버리지는 "실행했는가"만 본다. mutation score는 "버그를 심었을 때 테스트가 실제로 죽는가"를 본다.
+[tool.mutmut]
+source_paths = ["app.py"]
+pytest_add_cli_args_test_selection = ["test_app.py"]
