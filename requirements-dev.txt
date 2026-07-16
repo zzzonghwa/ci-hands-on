@@ -1,7 +1,17 @@
-# CI 품질 게이트용 개발 의존성.
-# 실전에서는 버전을 == 로 고정(pin)해 "매번 같은 도구 버전"을 보장한다.
-# 여기서는 학습용이라 이름만 명시 — 최신을 받는다.
-ruff
-black
-pytest
-pytest-cov
+# CI 품질 게이트용 개발 의존성 — 전 버전 고정(lockfile 원칙, 노트 03 계층 2).
+# 갱신은 의도적으로만: 버전을 올리는 커밋이 곧 감사 이력이 된다.
+# 직접 의존성뿐 아니라 전이(transitive) 의존성까지 고정한다 (pip freeze 산출물).
+black==26.5.1
+click==8.4.2
+coverage==7.15.2
+iniconfig==2.3.0
+mypy_extensions==1.1.0
+packaging==26.2
+pathspec==1.1.1
+platformdirs==4.10.0
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.1.1
+pytest-cov==7.1.0
+pytokens==0.4.1
+ruff==0.15.21
