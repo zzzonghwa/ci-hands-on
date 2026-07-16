@@ -1,0 +1,36 @@
+# ── 계층 5: AI 리뷰 + 계층 6 보조: 리스크 티어링 (노트 03) ──
+# 주의: 이 저장소의 코드도 Claude가 짠다 = 같은 모델 패밀리의 자기검증(원리 3).
+# 그래서 이 리뷰는 "1차 필터"로 논블로킹이고, 차단 권한은 결정론적 게이트
+# (SAST·mutation·커버리지·시크릿·의존성)에만 있다. 노트 03 If/Then 그대로.
+name: Claude Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write # 리뷰 코멘트 작성.
+  issues: write
+  actions: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            이 PR을 리뷰하고 결과를 PR 코멘트 하나로 남겨라.
+
+            1) 리스크 티어 판정 (노트 03 기준, 코멘트 맨 위에 표기):
+               - 티어 1: 인증·인가·암호화·결제·인프라 권한·워크플로 권한을 건드림 → "인간 리뷰 필수" 명시
+               - 티어 2: 일반 로직 변경
+               - 티어 3: 문서·테스트·설정 포맷만 → "자동 게이트 통과 시 자동 머지 가능" 명시
+            2) 로직 결함·엣지 케이스·보안 문제를 짚되, 확실한 것만. 스타일 지적은 하지 않는다
+               (ruff·black이 이미 게이트에 있다).
+            3) 이 리뷰는 논블로킹 1차 필터다. 판단 근거를 짧게 남겨라.
