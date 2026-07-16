@@ -13,6 +13,7 @@ permissions:
   pull-requests: write # 리뷰 코멘트 작성.
   issues: write
   actions: read
+  id-token: write # claude-code-action이 OIDC 토큰을 GitHub App 토큰으로 교환할 때 필요.
 
 jobs:
   review:
