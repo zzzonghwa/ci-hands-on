@@ -13,6 +13,19 @@ permissions:
   contents: read
 
 jobs:
+  # ── 계층 1: 시크릿 스캐닝 (노트 03) ──
+  # AI 지원 커밋의 시크릿 유출률은 약 2배(GitGuardian). 커밋 히스토리 전체를 스캔한다.
+  # push protection(저장소 설정)과 2중화: push 시점 차단 + CI 시점 이력 검사.
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks는 diff가 아니라 커밋 이력을 스캔하므로 전체 이력이 필요하다.
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # PR에 결과 코멘트를 달 때 사용.
+
   test:
     # ── 매트릭스 빌드: 아래 값마다 잡을 하나씩 병렬 생성 ──
     # python-version 3개 → test (3.11), test (3.12), test (3.13) 3개 잡이 동시에 돈다.
@@ -98,7 +111,7 @@ jobs:
   # 문제: 매트릭스로 바꾸면 체크 이름이 "test (3.11)"처럼 갈라져, 브랜치 보호가 가리키던 단일 이름 "test"가 사라진다.
   # 해결: 이름이 고정된 이 잡 하나를 브랜치 보호의 필수 체크로 삼는다. 잡이 몇 개로 늘든 보호 규칙은 안 건드려도 된다.
   ci-success:
-    needs: [test, docker-build, docker-smoke] # 세 갈래 전부 끝나야 실행
+    needs: [test, docker-build, docker-smoke, secrets-scan] # 네 갈래 전부 끝나야 실행
     if: always() # 앞 잡이 실패해도 이 잡은 반드시 돌아서 결과를 판정한다(안 그러면 skip돼 체크가 pending에 걸림).
     runs-on: ubuntu-latest
     steps:
@@ -107,7 +120,8 @@ jobs:
         run: |
           if [ "${{ needs.test.result }}" != "success" ] \
              || [ "${{ needs.docker-build.result }}" != "success" ] \
-             || [ "${{ needs.docker-smoke.result }}" != "success" ]; then
+             || [ "${{ needs.docker-smoke.result }}" != "success" ] \
+             || [ "${{ needs.secrets-scan.result }}" != "success" ]; then
             echo "실패한 잡 있음 → 게이트 차단"
             exit 1
           fi
