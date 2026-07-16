@@ -86,6 +86,22 @@ jobs:
       - name: Test + coverage gate
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=100
 
+  # ── 계층 4: mutation score 게이트 (노트 03 원리 5) ──
+  # AI 생성 테스트의 전형적 결함 = 실행만 하고 단언이 약한 테스트.
+  # 커버리지 100%여도 mutation score가 낮으면 그 테스트는 버그를 못 잡는다.
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - name: Mutation testing (score >= 80%)
+        run: |
+          mutmut run 2>&1 | tee mutmut.log || true # 생존 뮤턴트가 있어도 끝까지 돌린다. 판정은 게이트 스크립트가.
+          python mutation_gate.py mutmut.log
+
   # ── Docker 아티팩트: 딱 1번 빌드해서 레지스트리에 올린다 ──
   docker-build:
     needs: test # 테스트(매트릭스 전체) 통과한 코드만 이미지로 굽는다.
@@ -134,7 +150,7 @@ jobs:
   # 문제: 매트릭스로 바꾸면 체크 이름이 "test (3.11)"처럼 갈라져, 브랜치 보호가 가리키던 단일 이름 "test"가 사라진다.
   # 해결: 이름이 고정된 이 잡 하나를 브랜치 보호의 필수 체크로 삼는다. 잡이 몇 개로 늘든 보호 규칙은 안 건드려도 된다.
   ci-success:
-    needs: [test, docker-build, docker-smoke, secrets-scan, dependency-review, pip-audit] # 전 갈래 끝나야 실행
+    needs: [test, docker-build, docker-smoke, secrets-scan, dependency-review, pip-audit, mutation] # 전 갈래 끝나야 실행
     if: always() # 앞 잡이 실패해도 이 잡은 반드시 돌아서 결과를 판정한다(안 그러면 skip돼 체크가 pending에 걸림).
     runs-on: ubuntu-latest
     steps:
@@ -146,6 +162,7 @@ jobs:
              || [ "${{ needs.docker-smoke.result }}" != "success" ] \
              || [ "${{ needs.secrets-scan.result }}" != "success" ] \
              || [ "${{ needs.pip-audit.result }}" != "success" ] \
+             || [ "${{ needs.mutation.result }}" != "success" ] \
              || { [ "${{ needs.dependency-review.result }}" != "success" ] \
                   && [ "${{ needs.dependency-review.result }}" != "skipped" ]; }; then
             # dependency-review는 PR에만 도는 잡이라 main push에선 skipped를 허용한다.
