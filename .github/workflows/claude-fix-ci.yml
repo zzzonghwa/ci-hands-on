@@ -1,0 +1,48 @@
+# ── self-healing CI (노트 02) ──
+# PR 브랜치의 CI가 실패하면 에이전트가 로그를 읽고 수리 커밋을 푸시한다.
+# 안전장치:
+#  - main에서는 절대 안 돈다 (head_branch != main).
+#  - 에이전트의 수리 커밋도 모든 게이트를 처음부터 다시 통과해야 머지된다
+#    = "에이전트 산출물도 파이프라인에 거주한다" (노트 02).
+#  - 게이트 우회(테스트 삭제·설정 완화)는 프롬프트로 금지 + 어차피 리뷰·게이트가 잡는다.
+name: Claude Fix CI
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write # 수리 커밋 푸시.
+  pull-requests: write
+  issues: write
+  actions: read # 실패 로그 조회.
+  id-token: write # claude-code-action의 GitHub App 토큰 교환.
+
+jobs:
+  fix:
+    # fork 가드(3번째 조건): workflow_run은 base 저장소 컨텍스트(쓰기 권한+시크릿)로 돈다.
+    # fork PR의 실패 로그는 비신뢰 입력 = 프롬프트 인젝션 벡터이므로, 같은 저장소 브랜치만 수리한다.
+    # (AI 리뷰 티어1 지적을 반영 — PR #20 리뷰 코멘트 참고)
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch != 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            CI 실행이 실패했다 (run id: ${{ github.event.workflow_run.id }}, 브랜치: ${{ github.event.workflow_run.head_branch }}).
+            1) `gh run view ${{ github.event.workflow_run.id }} --log-failed`로 실패 원인을 파악하라.
+            2) 근본 원인을 수정하라. 게이트를 우회하는 수정(테스트 삭제, 커버리지·임계값 완화, 워크플로 변경)은 금지.
+            3) 수정 후 로컬에서 `pip install -r requirements-dev.txt && ruff check . && black --check . && pytest -q`로 확인하고,
+               conventional commit(한글 subject 30자 이내)으로 커밋해 현재 브랜치에 푸시하라.
+            4) 고칠 수 없는 원인(외부 장애, 시크릿 문제 등)이면 커밋 대신 PR에 원인 분석 코멘트를 남겨라.
+          claude_args: |
+            --allowedTools "Bash(gh run view:*),Bash(gh pr comment:*),Bash(gh pr view:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(pytest:*),Bash(ruff:*),Bash(black:*),Bash(pip install:*),Edit,Read,Write,Glob,Grep"
