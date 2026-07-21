@@ -1,0 +1,59 @@
+# ── 운영 추적: 실패 알림 (강의 Project 4 4단계 / 노트 08) ──
+# 사람 개입이 필요한 실패만 Gmail 로 알린다:
+#   - main 브랜치 CI 실패 = 에이전트가 안 도는 영역(안전장치) → 사람이 즉시 대응.
+#   - Claude Fix CI 자체 실패 = "수리공이 고장" → self-healing 루프 중단.
+# PR 브랜치 CI 실패는 알리지 않는다(에이전트 처리 영역, 알림 피로 방지).
+name: Notify on failure
+
+on:
+  workflow_run:
+    workflows: [CI, Claude Fix CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      (
+        (github.event.workflow_run.name == 'CI' &&
+         github.event.workflow_run.head_branch == 'main') ||
+        github.event.workflow_run.name == 'Claude Fix CI'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      # 시크릿은 if: 조건에서 직접 못 쓰므로, 가드 스텝에서 env 로 읽어 판정한다.
+      # 미설정이면 알림만 건너뛰고 실패시키지 않는다(대시보드는 알림 없이도 동작).
+      - name: Guard on secret
+        id: guard
+        env:
+          ADDR: ${{ secrets.GMAIL_ADDRESS }}
+        run: |
+          if [ -z "$ADDR" ]; then
+            echo "GMAIL_ADDRESS 미설정 → 알림 스킵"
+            echo "send=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "send=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send email via Gmail
+        if: steps.guard.outputs.send == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_ADDRESS }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }} # Google 앱 비밀번호(16자리).
+          from: CI Bot <${{ secrets.GMAIL_ADDRESS }}>
+          to: ${{ secrets.GMAIL_ADDRESS }}
+          subject: >-
+            [CI 실패] ${{ github.event.workflow_run.name }}
+            @ ${{ github.event.workflow_run.head_branch }}
+          body: |
+            워크플로: ${{ github.event.workflow_run.name }}
+            브랜치:   ${{ github.event.workflow_run.head_branch }}
+            커밋:     ${{ github.event.workflow_run.head_sha }}
+            실행 로그: ${{ github.event.workflow_run.html_url }}

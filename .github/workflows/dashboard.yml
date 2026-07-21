@@ -1,0 +1,46 @@
+# ── 운영 추적: CI 대시보드 (강의 Project 4 4단계 / 노트 08) ──
+# 매일 1회 run 데이터를 집계해 dashboard.md 를 갱신 커밋한다.
+# 관찰자는 개입하지 않는다: ci.yml·claude-fix-ci.yml·claude-review.yml 은 건드리지 않는다.
+name: CI Dashboard
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # UTC 21:00 = KST 06:00
+  workflow_dispatch: {} # 수동 실행 버튼(테스트·즉시 갱신용).
+
+permissions:
+  contents: write # dashboard.md 커밋·푸시.
+  actions: read # gh run list 로 실행 이력 조회.
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Generate dashboard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # gh CLI 인증.
+        run: python scripts/ci_dashboard.py
+
+      # 수동 실행 시에도 즉시 볼 수 있도록 run 요약 페이지에도 렌더한다(공짜).
+      - name: Show in run summary
+        run: cat dashboard.md >> "$GITHUB_STEP_SUMMARY"
+
+      # 변경이 있을 때만 커밋한다. [skip ci] 로 CI 재귀 트리거를 막는다.
+      # ponytail: main 직접 푸시. 브랜치 보호로 막히면 dashboard 전용 브랜치 푸시로 바꾼다.
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard.md
+          if git diff --cached --quiet; then
+            echo "변경 없음 → 커밋 스킵"
+          else
+            git commit -m "chore(dashboard): CI 지표 갱신 [skip ci]"
+            git push
+          fi
