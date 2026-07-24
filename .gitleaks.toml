@@ -1,0 +1,14 @@
+# gitleaks 설정 — 기본 룰을 "확장"만 한다(교체 아님). 모든 기본 탐지 룰 유지.
+[extend]
+useDefault = true
+
+# 노트03 게이트 튜토리얼(docs/plans/2026-07-16-note03-gates.md)은 시크릿 스캔
+# 게이트를 "가르치기 위해" 의도적으로 매칭되는 가짜 AWS 키를 예제로 담는다.
+# (그 문서 자신이 "EXAMPLE 들어간 키는 스캐너가 건너뛰므로 피하라"고 명시)
+# → 그 특정 예제 값 2개만 오탐으로 제외한다. 다른 어떤 시크릿도 계속 탐지된다.
+[allowlist]
+description = "노트03 튜토리얼의 의도된 예제 키(실제 키 아님)"
+regexes = [
+  '''AKIAQYLPMN5HHHFPZAM2''',
+  '''AKIA2NLPW7Q4RT8VKM39''',
+]
