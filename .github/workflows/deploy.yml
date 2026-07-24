@@ -1,0 +1,64 @@
+# ── CD: 배포(릴리스) — CI에서 분리한 워크플로 ──
+# 왜 별도인가: deploy는 `environment: production` 승인 게이트로 사람을 기다린다.
+# 이를 ci.yml 안에 두면 그 대기가 ci.yml의 concurrency 슬롯을 무기한 점유해 이후
+# main CI 전체를 막았다(잼). CI(검증)와 CD(배포)는 관심사·수명주기가 다르므로
+# concurrency 도메인을 분리한다. → 승인 대기는 아래 deploy 전용 그룹만 점유한다.
+name: Deploy
+
+on:
+  # ci.yml(name: CI)이 끝나면 그 결과를 이어받는다. main에서 성공했을 때만 의미가 있다.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# CD 전용 concurrency. 승인 대기가 CI를 막지 않는다. 새 배포 후보가 오면 낡은 대기 배포는 취소.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    # CI가 실제로 성공했고, 같은 저장소의 main일 때만.
+    # workflow_run은 base 저장소 컨텍스트(쓰기 권한·시크릿)로 도므로, fork 등에서
+    # 트리거되지 않도록 head_repository를 가드한다(자기 저장소 main만).
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    # 사람 승인 게이트(⑥). 이제 CI 슬롯이 아니라 CD 슬롯만 점유하므로 CI를 막지 않는다.
+    environment: production
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 배포 게이트: attestation이 검증되지 않는 이미지는 promote하지 않는다.
+      # "테스트한 것 = 배포할 것"에 "우리 파이프라인이 만든 것"이라는 서명 검증을 더한다.
+      # 이미지는 CI가 빌드·푸시한 그 커밋(SHA)의 것을 그대로 쓴다.
+      - name: Verify provenance (배포 게이트)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify \
+            oci://ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }} \
+            --repo ${{ github.repository }}
+
+      # 배포 = 새로 빌드하지 않는다. 이미 테스트·스모크까지 통과한 그 SHA 이미지에
+      # :latest 이름표만 붙여 올린다(promote). = "테스트한 바로 그 아티팩트를 릴리스".
+      - name: Promote tested image to :latest (릴리스)
+        run: |
+          SHA_IMAGE=ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }}
+          LATEST=ghcr.io/${{ github.repository }}:latest
+          docker pull "$SHA_IMAGE"
+          docker tag "$SHA_IMAGE" "$LATEST"
+          docker push "$LATEST"
+          echo "릴리스 완료: $LATEST 는 이제 $SHA_IMAGE 와 동일한 이미지"
