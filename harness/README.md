@@ -9,6 +9,17 @@
 진단·배경: `../docs/2026-07-21-continuous-compute-gap.md`
 설계: `../docs/specs/2026-07-21-pre-pr-harness-design.md`
 
+## 의도(intent) 흐름 — ①⑥
+
+사람은 코드가 아니라 **의도**를 넣는다. 대화(Claude Code)로 확정한 의도를
+`intents/<slug>.md`(무엇·왜·**수용 기준**)로 적어 `--intent-file`로 넘기면:
+
+- **①** 의도가 harness의 입력이 된다 (코드·PR을 사람이 직접 안 씀)
+- **④** evaluator가 **수용 기준**을 rubric으로 accept/revise 판정
+- **⑥** draft PR 본문에 의도+수용기준이 담겨, 사람은 **diff가 아니라 "수용 기준 충족?"**으로 승인
+
+즉 입력(의도)·실행(harness)·승인(의도 충족)이 분리된다.
+
 ## 기존 self-healing과의 차이
 
 | | claude-fix-ci.yml | harness/loop.py (이것) |
@@ -31,6 +42,9 @@ python harness/loop.py "..." --max-iters 3
 
 # evaluator(LLM 회의적 리뷰) 끄고 게이트만 (빠르게/저렴하게)
 python harness/loop.py "..." --no-evaluator
+
+# ①⑥ 의도 파일로 실행 — 의도+수용기준을 harness로 흘린다 (intents/TEMPLATE.md 참고)
+python harness/loop.py --intent-file intents/add-clamp.md --open-pr
 ```
 
 ## 흐름
