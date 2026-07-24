@@ -31,8 +31,8 @@
 | 조건 | 우리 구현 | 판정 |
 |---|---|---|
 | build/test가 agent loop에 들 만큼 빠름 | 매트릭스 3버전 + docker build + mutation = gate용 속도 | ❌ |
-| stateful·incremental 환경 | `runs-on: ubuntu-latest` 매번 깨끗한 ephemeral 러너. `actions/cache`조차 없음 | ❌ |
-| cache가 orchestration 계층 | 캐시 자체가 없음 | ❌ |
+| stateful·incremental 환경 | `runs-on: ubuntu-latest` 매번 깨끗한 ephemeral 러너지만 **pip 캐시 복원(B안, 2026-07-24)**. 진짜 warm workspace는 아님 | 🔸 캐시 복원 수준 |
+| cache가 orchestration 계층 | **`setup-python` `cache: pip`으로 requirements-dev.txt 해시 키 캐시 도입(B안).** 1회 miss→저장, 이후 hit | ✅ (test 잡) |
 | 병렬 후보 탐색 수용 | 단일 diff 선형 파이프라인 | ❌ |
 
 ## 우리가 서 있는 위치
