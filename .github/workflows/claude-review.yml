@@ -8,6 +8,11 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+# 리뷰 병목 완화: 커밋 연타 시 낡은 커밋에 대한 AI 리뷰를 취소하고 최신 것만 남긴다.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write # 리뷰 코멘트 작성.

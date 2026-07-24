@@ -8,6 +8,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group: # CodeQL은 필수 체크다. merge queue 항목의 merge_group에서도 돌지 않으면 큐가 영구 정지한다.
+    branches: [main]
 
 permissions:
   contents: read
