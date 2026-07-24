@@ -98,6 +98,21 @@ org 소유 저장소라면 활성화 절차:
 | `ci-success` (`if: always()`, 이벤트 가드 없음) | 실행됨 | ✅ required check 재현 → 큐 안 멈춤 |
 | `deploy` (`if: event_name == 'push' && ref == main`) | 실행 안 됨 | ✅ 큐 merge 후 main push에서만 배포 |
 
+## 직렬화 실물 관찰 (org 데모, 2026-07-24)
+
+개인 계정 repo에선 merge queue를 못 켜므로, 무료 org `hongjonghwa`에 일회용 데모 repo(`merge-queue-demo`)를 만들어 관찰했다. ruleset API로 `merge_queue` 룰 + 필수체크(`check`)를 활성화하고, 90초짜리 CI로 큐를 눈에 보이게 했다.
+
+서로 다른 파일을 건드리는 PR 2개를 큐에 넣었을 때(`min_entries_to_merge: 2`로 그룹화 강제), 두 임시 브랜치가 동시에 존재하며 적층됐다:
+
+| 큐 임시 브랜치 | 포함 파일 | = |
+|---|---|---|
+| `gh-readonly-queue/main/pr-3-…` | `alpha.txt` | main + A |
+| `gh-readonly-queue/main/pr-4-…` | `alpha.txt`, `beta.txt` | main + A + **B** |
+
+→ 뒤 항목(B)의 큐 브랜치가 앞 항목(A)의 파일을 포함 = **pre-merge 직렬화 확인.** 둘 다 merge_group CI 통과 후 함께 머지.
+
+부수 관찰: 같은 파일 끝줄을 각각 고친 PR 2개는, 앞 PR 머지 직후 뒤 PR이 `CONFLICTING`으로 큐에서 자동 탈락 = "조정 실패 시 머지 전 차단" 동작.
+
 ## 핵심 포인트 요약
 
 - ✅ 코드 구현 완료: `merge_group` 트리거(ci·codeql) + `concurrency`(ci·review) 2개.
