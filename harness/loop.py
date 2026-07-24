@@ -26,6 +26,9 @@ AGENT_TOOLS = "Edit Read Write Grep Glob"
 # 아니므로, 게이트 우회·자기 커밋을 막으려면 disallowedTools 로 못박아야 한다.
 # (soft 경계다 — 커널 샌드박스가 아니라 claude 권한 레이어에 의존한다.)
 AGENT_DENY = "Bash"
+# evaluator(회의적 리뷰어)는 읽기 전용 — 편집·커밋 없이 판정만 한다(코딩과 역할 분리).
+EVALUATOR_TOOLS = "Read Grep Glob"
+EVALUATOR_DENY = "Bash Edit Write"
 
 LoopResult = namedtuple("LoopResult", "status iterations output")
 
@@ -46,29 +49,70 @@ def build_prompt(task: str, feedback: str | None) -> str:
     return "\n\n".join(parts)
 
 
+def build_eval_prompt(task: str, gate_output: str) -> str:
+    """evaluator(회의적 리뷰어)용 프롬프트. 게이트가 못 잡는 것을 본다."""
+    return "\n\n".join(
+        [
+            f"원래 작업(의도): {task}",
+            "너는 회의적 코드 리뷰어다. 방금 변경이 게이트(ruff·black·pytest)를 통과했다. "
+            "게이트가 못 잡는 것을 보라: 의도를 실제로 충족하는가? 설계·정확성·엣지케이스 "
+            "결함은 없는가? 기본 태도는 의심(REVISE)이고, 의도를 충족하고 결함이 없을 때만 ACCEPT.",
+            f"참고용 게이트 출력(모두 통과한 상태):\n{gate_output}",
+            "변경된 파일을 직접 읽어 확인하라(Read/Grep). 편집·커밋은 하지 마라.",
+            "마지막 줄에 정확히 이 형식으로만 판정하라: '판정: ACCEPT' 또는 '판정: REVISE'. "
+            "REVISE면 그 위에 고쳐야 할 구체적 이유를 적어라.",
+        ]
+    )
+
+
+def parse_verdict(output: str) -> tuple[bool, str]:
+    """evaluator 출력에서 판정을 뽑는다. 기본은 REVISE(회의적) — 명시적 ACCEPT만 통과.
+
+    여러 '판정:' 줄이 있으면 마지막 것이 최종. 반환 (accept, review).
+    """
+    accept = False
+    for line in output.splitlines():
+        if "판정:" in line:
+            accept = "ACCEPT" in line.upper()
+    return accept, output
+
+
 def slugify_task(task: str, maxlen: int = 40) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")
     return slug[:maxlen].strip("-") or "task"
 
 
-def harness_loop(task, agent_fn, gate_fn, max_iters: int = MAX_ITERS) -> LoopResult:
-    """agent → gate 를 반복한다. 부작용 없음.
+def harness_loop(
+    task, agent_fn, gate_fn, evaluator_fn=None, max_iters: int = MAX_ITERS
+) -> LoopResult:
+    """agent → gate → (evaluator) 를 반복한다. 부작용 없음.
 
-    반환 status: "green"(통과) · "no_progress"(동일 실패 2회) · "exhausted"(횟수 소진).
-    green 이 아니면 main 은 PR 을 만들지 않는다.
+    흐름(A안): 게이트가 통과하면 evaluator_fn(있을 때)이 accept/revise 를 판정한다.
+    accept 면 green, revise 면 그 리뷰를 되먹여 재반복한다(게이트 실패와 동일 취급).
+    evaluator_fn=None 이면 게이트만으로 green(하위호환).
+
+    반환 status: "green"(게이트 통과 + evaluator accept) · "no_progress"(동일 사유 2회)
+    · "exhausted"(횟수 소진). green 이 아니면 main 은 PR 을 만들지 않는다.
     """
     feedback = None
-    prev_output = None
+    prev_reason = None
     for i in range(1, max_iters + 1):
         agent_fn(task, feedback)
-        ok, output = gate_fn()
+        ok, gate_output = gate_fn()
         if ok:
-            return LoopResult("green", i, output)
-        if output == prev_output:  # 하드닝 1: 무진전 조기 종료.
-            return LoopResult("no_progress", i, output)
-        prev_output = output
-        feedback = output
-    return LoopResult("exhausted", max_iters, prev_output)
+            if evaluator_fn is None:
+                return LoopResult("green", i, gate_output)
+            accept, review = evaluator_fn(task, gate_output)
+            if accept:
+                return LoopResult("green", i, gate_output)
+            reason = f"[게이트는 통과했으나 리뷰어가 재작업 요청]\n{review}"
+        else:
+            reason = gate_output
+        if reason == prev_reason:  # 하드닝 1: 무진전(게이트 실패든 리뷰든) 조기 종료.
+            return LoopResult("no_progress", i, reason)
+        prev_reason = reason
+        feedback = reason
+    return LoopResult("exhausted", max_iters, prev_reason)
 
 
 # ── 부작용부 (main 에서만 호출) ──
@@ -111,6 +155,28 @@ def run_gates() -> tuple[bool, str]:
     return True, "\n".join(outputs)
 
 
+def run_evaluator(task: str, gate_output: str) -> tuple[bool, str]:
+    """게이트 통과분을 회의적 리뷰어(claude)가 판정한다. 읽기 전용, 편집·커밋 없음.
+
+    자기검증 편향 완화: refute-first 프롬프트 + 편집 권한 미부여(코딩과 역할 분리).
+    """
+    proc = subprocess.run(
+        [
+            "claude",
+            "-p",
+            build_eval_prompt(task, gate_output),
+            "--allowedTools",
+            EVALUATOR_TOOLS,
+            "--disallowedTools",
+            EVALUATOR_DENY,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return parse_verdict(proc.stdout)
+
+
 def _git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True, check=True)
 
@@ -127,6 +193,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--open-pr",
         action="store_true",
         help="push + draft PR 까지 생성(기본: 브랜치·커밋만, push/PR 안 함)",
+    )
+    parser.add_argument(
+        "--no-evaluator",
+        action="store_true",
+        help="LLM evaluator 단계를 끄고 게이트만으로 판정(기본: evaluator 켜짐)",
     )
     args = parser.parse_args(argv)
     if args.max_iters < 1:  # "max 5" 계약 방어 — 0/음수 거부.
@@ -145,7 +216,8 @@ def main(argv: list[str]) -> int:
     _git("switch", "-c", branch)
     print(f"브랜치 생성: {branch}")
 
-    result = harness_loop(args.task, run_agent, run_gates, args.max_iters)
+    evaluator = None if args.no_evaluator else run_evaluator
+    result = harness_loop(args.task, run_agent, run_gates, evaluator, args.max_iters)
     print(f"루프 종료: {result.status} ({result.iterations}회)")
 
     if result.status != "green":
