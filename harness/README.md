@@ -28,6 +28,9 @@ python harness/loop.py "..." --open-pr
 
 # 반복 횟수 조정 (기본 5, 1 이상)
 python harness/loop.py "..." --max-iters 3
+
+# evaluator(LLM 회의적 리뷰) 끄고 게이트만 (빠르게/저렴하게)
+python harness/loop.py "..." --no-evaluator
 ```
 
 ## 흐름
@@ -35,10 +38,11 @@ python harness/loop.py "..." --max-iters 3
 ```
 [0] 깨끗한 트리 확인 + harness/<slug> 브랜치 생성
 [1] agent 구현/수정 (claude -p, Bash·git 권한 없음)
-[2] 로컬 게이트 (ruff·black·pytest)
-[3] 초록불? → 종료 / 2회 연속 동일 실패 → 조기 종료 / max 소진 → 종료 / 아니면 되먹임 후 반복
-[4] green이면 harness가 커밋
-[5] --open-pr이면 push + gh pr create --draft
+[2] 로컬 게이트 (ruff·black·pytest) — 결정론
+[3] 게이트 green이면 evaluator(claude, 회의적 리뷰어)가 accept/revise 판정 — LLM
+[4] accept → 종료 / revise → 리뷰를 되먹여 반복 / 2회 연속 동일 사유 → 조기 종료 / max 소진 → 종료
+[5] green(게이트+accept)이면 harness가 커밋
+[6] --open-pr이면 push + gh pr create --draft
 ```
 
 ## 안전장치
@@ -47,6 +51,7 @@ python harness/loop.py "..." --max-iters 3
 - **로컬 모드 기본** — `--open-pr` 없으면 브랜치·커밋까지만(push·PR 안 함). dry-run 아님
 - **draft PR only** — 자동 머지 아님. 사람이 "의도+결과"를 승인
 - **agent에 Bash·git 미부여** — `--disallowedTools "Bash"`로 명시 차단. 커밋·푸시·PR·게이트는 harness만. soft 경계(claude 권한 레이어 의존)
+- **evaluator는 읽기 전용** — `--allowedTools "Read Grep Glob"`, 편집·커밋 불가. 자기검증 편향은 refute-first 프롬프트 + 코딩과 역할 분리로 완화(soft)
 - **깨끗한 트리 강제** — 시작 시 dirty면 중단, green인데 변경 없으면 PR 안 만듦
 
 ## 전제
