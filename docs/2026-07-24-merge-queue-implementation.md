@@ -76,17 +76,19 @@ concurrency:
 
 효과: 커밋 연타 시 낡은 커밋에 대한 AI 리뷰를 취소하고 최신 것만 남긴다. "리뷰로 이동한 병목"의 낭비분 제거.
 
-### 4. 저장소 설정 — merge queue 활성화 (UI, 1회)
+### 4. 저장소 설정 — merge queue 활성화 (⚠️ 이 저장소에선 불가)
 
-> ⚠️ 이 저장소는 **classic branch protection**(required checks: `ci-success`, `CodeQL`)을 쓴다. merge queue는 classic 규칙에선 REST API로 켤 수 없고 UI 체크박스로만 켠다. (rulesets를 새로 만드는 방법도 있으나 classic과 겹쳐 동작이 혼란스러워지므로 채택 안 함.)
+> **플랫폼 제약 (2026-07-24 공식 문서 확인):** merge queue는 **조직(org) 소유 저장소에서만** 제공된다.
+> 원문: "Pull request merge queues are available in any **public repository owned by an organization**, or in private repositories owned by organizations using GitHub Enterprise Cloud."
+> 출처: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue
+>
+> 이 저장소 `zzzonghwa/ci-hands-on`은 **개인 계정 소유**라 merge queue를 켤 수 없다. 그래서 classic 브랜치 보호에 "Require merge queue" 체크박스가 아예 나타나지 않는다(ruleset 경로도 org 조건은 동일). 조직으로 이전/신규 생성해야 활성화 가능하다.
 
-절차:
-1. GitHub → **Settings → Branches → `main` 규칙 Edit**
-2. **Require merge queue** 체크
-3. Merge method / build concurrency 등은 기본값 유지
-4. Save
+org 소유 저장소라면 활성화 절차:
+1. GitHub → **Settings → Branches → 대상 브랜치 규칙 Edit** → **Require merge queue** 체크 → Save, 또는
+2. **Ruleset**으로: `POST /repos/{org}/{repo}/rulesets`에 `merge_queue` 룰(필수 파라미터 7개: check_response_timeout_minutes, grouping_strategy, max_entries_to_build/merge, merge_method, min_entries_to_merge, min_entries_to_merge_wait_minutes) 추가.
 
-If 이 체크를 안 하면 → Then `merge_group` 트리거는 영원히 발생하지 않고 워크플로 변경은 무해한 no-op으로 남는다 (기존 PR CI는 그대로 동작).
+**이 저장소에서 현재 상태:** `merge_group` 트리거는 발동하지 않는 **무해한 no-op**(향후 org 이전 시 즉시 작동). `concurrency` 블록은 org 여부와 무관하게 **지금 작동**한다.
 
 ## 기존 게이트와의 정합성 (깨지지 않음 확인)
 
@@ -98,7 +100,7 @@ If 이 체크를 안 하면 → Then `merge_group` 트리거는 영원히 발생
 
 ## 핵심 포인트 요약
 
-- ✅ 구현 완료(코드): `merge_group` 트리거 + `concurrency` 2개. → `docs/2026-07-21-continuous-compute-gap.md`의 ⑤ 갭을 닫음.
-- ☐ 남은 1단계(사람): Settings에서 **Require merge queue** 체크. 이걸 켜야 실제 작동.
+- ✅ 코드 구현 완료: `merge_group` 트리거(ci·codeql) + `concurrency`(ci·review) 2개.
+- ✅ `concurrency`는 지금 작동 → "CI 큐/리뷰 병목" 절반 실현.
+- ⛔ `merge_group`(pre-merge 직렬화)은 **org 소유 저장소에서만** 활성화 가능. 이 개인 계정 repo에선 무해한 no-op → 직렬화 실물 관찰은 별도 org 데모 repo에서 수행(2026-07-24).
 - 취소(concurrency)와 직렬화(merge queue)는 다른 병목을 침 — 둘 다 유지.
-- 학습 한계: 규모가 없으면 큐가 붐비는 걸 체감하긴 어렵다. 개념·관문의 동작 확인이 목적.
