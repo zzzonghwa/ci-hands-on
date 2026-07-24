@@ -201,42 +201,8 @@ jobs:
           fi
           echo "모든 잡 통과"
 
-  # ── 배포(릴리스) 잡 = Continuous Delivery의 마지막 단계 ──
-  # PR에선 안 돈다. main에 실제로 병합(push)됐을 때만 실행 → "검증 끝난 코드"만 배포 후보.
-  deploy:
-    needs: [test, docker-build, docker-smoke] # 위 검증이 다 끝나야 배포 후보가 된다.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    # ↓ 이 한 줄이 "사람 승인 버튼"을 건다. production 환경에 required reviewer가 있으면,
-    #   이 잡은 승인 전까지 멈춰 대기한다 = Continuous Delivery의 핵심(기술검증 끝 → 사람이 릴리스 결정).
-    environment: production
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      # 배포 게이트: attestation이 검증되지 않는 이미지는 promote하지 않는다.
-      # "테스트한 것 = 배포할 것"에 "우리 파이프라인이 만든 것"이라는 서명 검증을 더한다.
-      - name: Verify provenance (배포 게이트)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh attestation verify \
-            oci://ghcr.io/${{ github.repository }}:${{ github.sha }} \
-            --repo ${{ github.repository }}
-
-      # 배포 = 새로 빌드하지 않는다. 이미 테스트·스모크까지 통과한 그 SHA 이미지에
-      # :latest 이름표만 붙여 올린다(promote). = "테스트한 바로 그 아티팩트를 릴리스".
-      - name: Promote tested image to :latest (릴리스)
-        run: |
-          SHA_IMAGE=ghcr.io/${{ github.repository }}:${{ github.sha }}
-          LATEST=ghcr.io/${{ github.repository }}:latest
-          docker pull "$SHA_IMAGE"
-          docker tag "$SHA_IMAGE" "$LATEST"
-          docker push "$LATEST"
-          echo "릴리스 완료: $LATEST 는 이제 $SHA_IMAGE 와 동일한 이미지"
+  # ── 배포(deploy)는 별도 워크플로 `deploy.yml`로 분리했다 ──
+  # 왜: deploy의 `environment: production` 승인 게이트가 여기(ci.yml) concurrency 슬롯을
+  # 무기한 점유해 이후 main CI를 전부 막는 잼을 유발했다. CI(검증)와 CD(배포)는 관심사·
+  # 수명주기가 달라 concurrency 도메인도 분리한다. deploy.yml은 이 CI의 성공을
+  # workflow_run으로 이어받아, 검증된 SHA 이미지를 승인 후 promote한다.
