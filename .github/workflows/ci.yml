@@ -73,9 +73,15 @@ jobs:
       - uses: actions/checkout@v7
 
       # 2) 러너에 Python을 설치한다. 버전은 매트릭스 값을 주입(${{ matrix.python-version }}).
+      #    cache: pip → 발표 "Continuous Compute"의 stateful 첫걸음(B안). 매번 clean 러너지만
+      #    pip 다운로드 캐시(~/.cache/pip)를 requirements-dev.txt 해시로 복원/저장한다.
+      #    1회차=캐시 miss(저장), 2회차부터=hit(설치 시간 단축). 의존성 파일이 바뀌면 키가 바뀌어 자동 무효화.
+      #    (setup-python 내장 기능 = 별도 actions/cache 스텝 불필요)
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
 
       # 3) 환경 준비: requirements-dev.txt 목록대로 개발 도구(ruff·black·pytest·pytest-cov) 설치.
       #    이 단계는 "설치"일 뿐 검사가 아니다. 실제 검사는 아래 4~6단계가 한다.
