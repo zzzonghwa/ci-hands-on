@@ -56,7 +56,8 @@ def build_eval_prompt(task: str, gate_output: str) -> str:
             f"원래 작업(의도): {task}",
             "너는 회의적 코드 리뷰어다. 방금 변경이 게이트(ruff·black·pytest)를 통과했다. "
             "게이트가 못 잡는 것을 보라: 의도를 실제로 충족하는가? 설계·정확성·엣지케이스 "
-            "결함은 없는가? 기본 태도는 의심(REVISE)이고, 의도를 충족하고 결함이 없을 때만 ACCEPT.",
+            "결함은 없는가? 위 의도에 '수용 기준'이 있으면 그 항목 하나하나를 rubric으로 확인하라. "
+            "기본 태도는 의심(REVISE)이고, 의도(수용 기준 포함)를 충족하고 결함이 없을 때만 ACCEPT.",
             f"참고용 게이트 출력(모두 통과한 상태):\n{gate_output}",
             "변경된 파일을 직접 읽어 확인하라(Read/Grep). 편집·커밋은 하지 마라.",
             "마지막 줄에 정확히 이 형식으로만 판정하라: '판정: ACCEPT' 또는 '판정: REVISE'. "
@@ -80,6 +81,30 @@ def parse_verdict(output: str) -> tuple[bool, str]:
 def slugify_task(task: str, maxlen: int = 40) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")
     return slug[:maxlen].strip("-") or "task"
+
+
+def intent_title(content: str) -> str:
+    """의도 마크다운에서 제목을 뽑는다: 첫 '# ' 헤딩 → 첫 비어있지 않은 줄 → 'intent'."""
+    for line in content.splitlines():
+        s = line.strip()
+        if s.startswith("# "):
+            return s[2:].strip() or "intent"
+    for line in content.splitlines():
+        if line.strip():
+            return line.strip()
+    return "intent"
+
+
+def build_pr_body(task: str, from_intent: bool) -> str:
+    """PR 본문. intent 기반이면 의도+수용기준을 담고 '의도 단위 승인'을 명시(⑥)."""
+    if not from_intent:
+        return task
+    return (
+        f"{task}\n\n---\n\n"
+        "이 PR은 위 **의도**를 harness가 구현하고 게이트(ruff·black·pytest)와 "
+        "LLM evaluator를 통과한 결과다.\n"
+        "**승인 기준: 수용 기준 충족 여부**(diff 라인이 아니라 의도 달성으로 판단)."
+    )
 
 
 def harness_loop(
@@ -177,6 +202,12 @@ def run_evaluator(task: str, gate_output: str) -> tuple[bool, str]:
     return parse_verdict(proc.stdout)
 
 
+def read_intent(path: str) -> str:
+    """의도 파일(마크다운)을 읽어 문자열로 반환한다(① 캡처 → dispatch)."""
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def _git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True, check=True)
 
@@ -187,7 +218,15 @@ def _tree_dirty() -> bool:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="pre-PR harness 루프")
-    parser.add_argument("task", help="agent 에게 시킬 작업(intent)")
+    parser.add_argument(
+        "task",
+        nargs="?",
+        help="agent 에게 시킬 작업(intent 문자열). --intent-file 과 택1",
+    )
+    parser.add_argument(
+        "--intent-file",
+        help="의도+수용기준이 담긴 마크다운 파일 경로(①). task 인자와 택1",
+    )
     parser.add_argument("--max-iters", type=int, default=MAX_ITERS)
     parser.add_argument(
         "--open-pr",
@@ -202,6 +241,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.max_iters < 1:  # "max 5" 계약 방어 — 0/음수 거부.
         parser.error("--max-iters 는 1 이상이어야 한다")
+    if bool(args.task) == bool(args.intent_file):  # 택1 강제(둘 다·둘 다 아님 거부).
+        parser.error("task 인자 또는 --intent-file 중 정확히 하나를 지정하라")
     return args
 
 
@@ -212,12 +253,17 @@ def main(argv: list[str]) -> int:
         print("작업 트리가 더럽다. 커밋/스태시 후 다시 실행하라.", file=sys.stderr)
         return 1
 
-    branch = f"harness/{slugify_task(args.task)}"
+    # ① 입력을 다음 프로세스로 흘린다: intent 파일이면 그 내용을 task 로 삼는다.
+    from_intent = bool(args.intent_file)
+    task = read_intent(args.intent_file) if from_intent else args.task
+    title = intent_title(task) if from_intent else task
+
+    branch = f"harness/{slugify_task(title)}"
     _git("switch", "-c", branch)
     print(f"브랜치 생성: {branch}")
 
     evaluator = None if args.no_evaluator else run_evaluator
-    result = harness_loop(args.task, run_agent, run_gates, evaluator, args.max_iters)
+    result = harness_loop(task, run_agent, run_gates, evaluator, args.max_iters)
     print(f"루프 종료: {result.status} ({result.iterations}회)")
 
     if result.status != "green":
@@ -231,7 +277,7 @@ def main(argv: list[str]) -> int:
 
     # 트리는 시작 시 깨끗했으므로 -A 는 agent 변경만 스테이징한다.
     _git("add", "-A")
-    _git("commit", "-m", f"feat: {args.task}")
+    _git("commit", "-m", f"feat: {title}")
 
     if not args.open_pr:
         # 기본 모드도 브랜치·커밋은 실제로 남긴다(정직하게: dry-run 아님).
@@ -239,7 +285,23 @@ def main(argv: list[str]) -> int:
         return 0
 
     _git("push", "-u", "origin", branch)
-    subprocess.run(["gh", "pr", "create", "--draft", "--fill"], check=True)
+    if from_intent:
+        # ⑥ 의도 단위 승인: PR 본문에 의도+수용기준을 담아 diff 아닌 의도로 승인하게 한다.
+        subprocess.run(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--draft",
+                "--title",
+                f"feat: {title}",
+                "--body",
+                build_pr_body(task, True),
+            ],
+            check=True,
+        )
+    else:
+        subprocess.run(["gh", "pr", "create", "--draft", "--fill"], check=True)
     print("draft PR 생성 완료")
     return 0
 

@@ -185,6 +185,26 @@ def test_build_eval_prompt():
     assert "의심" in p  # refute-first
 
 
+# ── ①⑥ intent 흐름: 의도 파일 → harness → 의도 단위 PR (순수부) ──
+
+
+def test_intent_title():
+    from harness.loop import intent_title
+
+    assert intent_title("# Add clamp\n\n본문") == "Add clamp"  # 첫 헤딩
+    assert intent_title("헤딩없음\n둘째줄") == "헤딩없음"  # 첫 비어있지 않은 줄
+    assert intent_title("\n\n   \n") == "intent"  # 비면 기본값
+
+
+def test_build_pr_body():
+    from harness.loop import build_pr_body
+
+    assert build_pr_body("그냥 작업", False) == "그냥 작업"  # 비-intent는 그대로
+    body = build_pr_body("# 의도\n## 수용 기준\n- [ ] c1", True)
+    assert "수용 기준" in body  # 의도 본문 embed
+    assert "승인 기준" in body  # ⑥ 의도 단위 승인 명시
+
+
 # ── main() 안전성: git·gh 를 모킹해 실제 PR 이 만들어지는 조건을 못박는다 ──
 
 
@@ -260,3 +280,23 @@ def test_main_skips_evaluator_with_flag(monkeypatch):
     monkeypatch.setattr(loop, "run_evaluator", _boom)
     assert loop.main(["prog", "t", "--no-evaluator"]) == 0
     assert any("commit" in a for a in git_calls)  # 게이트만으로 커밋까지 감
+
+
+def test_parse_args_requires_exactly_one_intent_source():
+    with pytest.raises(SystemExit):  # 둘 다 없음
+        loop.main(["prog"])
+    with pytest.raises(SystemExit):  # 둘 다 있음
+        loop.main(["prog", "t", "--intent-file", "x.md"])
+
+
+def test_main_intent_file_flow(monkeypatch):
+    # ①⑥: 의도 파일 → 제목으로 커밋/브랜치, PR 본문에 의도+승인기준.
+    git_calls, gh_calls = _wire(monkeypatch, [False, True], (True, "ok"))
+    monkeypatch.setattr(
+        loop, "read_intent", lambda p: "# Add clamp\n\n## 수용 기준\n- [ ] c1"
+    )
+    assert loop.main(["prog", "--intent-file", "x.md", "--open-pr"]) == 0
+    commits = [a for a in git_calls if a and a[0] == "commit"]
+    assert commits and "Add clamp" in commits[0][2]  # intent 제목으로 커밋
+    assert gh_calls[0][:3] == ["gh", "pr", "create"]
+    assert any("승인 기준" in str(x) for x in gh_calls[0])  # ⑥ 의도 단위 승인 본문

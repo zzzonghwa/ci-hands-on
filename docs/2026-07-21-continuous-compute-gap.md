@@ -21,12 +21,12 @@
 
 | 발표 제안 | 우리 구현 | 근거 파일 | 판정 |
 |---|---|---|---|
-| ① Intent & Plan (사람은 코드 아닌 의도를 명시) | 사람이 코드·PR을 직접 만든다 | — | ❌ 없음 |
+| ① Intent & Plan (사람은 코드 아닌 의도를 명시) | **harness `--intent-file`(2026-07-24)**: `intents/<slug>.md`(의도·왜·수용기준)를 입력으로 harness가 구현. 사람은 코드가 아니라 의도를 넣는다(대화로 의도 작성 → 파일 → dispatch) | `harness/loop.py`(`read_intent`), `intents/TEMPLATE.md` | ✅ 구현(의도 파일 입력) |
 | ② Agent harness loop (PR *이전* checkout→build→test 반복) | **`harness/loop.py` 구현(2026-07-24)** — PR 열기 전 agent→gate 반복, 통과분만 draft PR. (기존 `claude-fix-ci`는 PR 사후 수리로 별개 유지) | `harness/loop.py` | ✅ 구현 |
 | ③ 내부 검증 상시화 (build/test가 매 iteration의 일부) | **harness가 매 반복마다 ruff·black·pytest(cov100) 게이트 실행(2026-07-24).** ci.yml의 마지막-게이트도 그대로 유지(이중) | `harness/loop.py`, `.github/workflows/ci.yml` | ✅ 구현 |
 | ④ Agent 외부 검증 (evaluator가 주 agent에 피드백) | **harness에 LLM evaluator 추가(2026-07-24)**: 게이트 green 후 회의적 리뷰어(claude, 읽기전용)가 accept/revise 판정 → revise면 코딩 agent에 되먹여 재반복. 결정론 게이트 되먹임에 더해 "게이트가 못 잡는 것"까지 커버 | `harness/loop.py`(`run_evaluator`) | ✅ 구현(LLM evaluator + 되먹임) |
 | ⑤ Pre-merge queue (repo 반영 전 충돌·의존성 조정) | 구현 + org 데모에서 직렬화 실물 관찰 완료 (2026-07-24). 단 개인 repo는 org가 아니라 미가동(무해한 no-op) | `.github/workflows/ci.yml`, `docs/2026-07-24-merge-queue-implementation.md` | ✅ 실증 (개인 repo는 org 필요) |
-| ⑥ Human approval 재배치 (diff 아닌 "의도+결과" 승인) | `deploy` 잡의 `environment: production` = **PR/커밋 단위 승인** | `.github/workflows/ci.yml` | ❌ 없음 |
+| ⑥ Human approval 재배치 (diff 아닌 "의도+결과" 승인) | **intent 기반 draft PR(2026-07-24)**: PR 본문에 의도+수용기준 embed → 사람은 diff가 아니라 "수용 기준 충족?"으로 승인. 배포는 `deploy.yml` `environment: production` 승인 유지 | `harness/loop.py`(`build_pr_body`), `deploy.yml` | 🔸→✅ 의도 단위 PR 승인 |
 
 ## Continuous Compute 4조건 대조
 
@@ -83,6 +83,6 @@
 ## 핵심 포인트 요약
 
 1. (2026-07-21) 출발점은 PR 중심 + AI 볼트온 = 발표가 지목한 병목 중간 지대였다.
-2. **(2026-07-24 갱신)** 6요소 중 **②③④⑤ 구현(④는 LLM evaluator 되먹임까지), ①⑥ 미구현.** 4조건 중 **cache ✅·stateful 🔸**, 속도·병렬 후보탐색은 ❌. (표 참조)
+2. **(2026-07-24 갱신)** 6요소 중 **①②③④⑤⑥ 모두 학습 규모로 구현**(①=의도파일 입력, ④=LLM evaluator 되먹임, ⑤=merge queue(개인 repo no-op), ⑥=의도 단위 PR 승인). 4조건 중 **cache ✅·stateful 🔸**, 속도·병렬 후보탐색은 ❌. (표 참조)
 3. 발표는 포지션 토크·학습 규모 아님 → 전체 이식이 아니라 핵심 개념 체험이 목표. (이 원칙은 유효)
 4. A(merge queue)·B(캐시)·C(harness)는 **모두 완료.** 다음 후보: ①(intent 입력)·⑥(승인 재배치 강화)·캐시 확장. 종합 로드맵은 `notes/ai/`.
