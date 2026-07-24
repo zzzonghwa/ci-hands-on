@@ -100,6 +100,91 @@ def test_build_prompt_gate_bypass_and_feedback():
     assert "실패 로그" in build_prompt("t", "boom")
 
 
+# ── evaluator(④): 게이트 green 후 LLM 판정 + 되먹임 (LLM 없이 fake로 검증) ──
+
+
+def _eval_revise_then_accept(n):
+    """앞의 n-1회는 revise(서로 다른 리뷰), n회째 accept."""
+    state = {"i": 0}
+
+    def ev(task, gate_out):
+        state["i"] += 1
+        if state["i"] >= n:
+            return True, "accept"
+        return False, f"revise-{state['i']}"
+
+    return ev
+
+
+def test_evaluator_accept_returns_green():
+    agent = FakeAgent()
+    res = harness_loop(
+        "t", agent, lambda: (True, "ok"), lambda task, g: (True, "accept"), max_iters=5
+    )
+    assert res.status == "green"
+    assert res.iterations == 1
+    assert len(agent.calls) == 1
+
+
+def test_evaluator_revise_then_accept_loops():
+    agent = FakeAgent()
+    res = harness_loop(
+        "t", agent, lambda: (True, "ok"), _eval_revise_then_accept(3), max_iters=5
+    )
+    assert res.status == "green"
+    assert res.iterations == 3  # 게이트는 매번 통과하나 리뷰어가 2회 revise
+    assert agent.calls[0][1] is None
+    assert "revise-1" in agent.calls[1][1]  # 리뷰가 다음 반복 피드백으로
+
+
+def test_evaluator_persistent_revise_is_no_progress():
+    agent = FakeAgent()
+    res = harness_loop(
+        "t",
+        agent,
+        lambda: (True, "ok"),
+        lambda task, g: (False, "same review"),
+        max_iters=5,
+    )
+    assert res.status == "no_progress"
+    assert res.iterations == 2  # 동일 리뷰 2회 → 조기 종료
+
+
+def test_evaluator_none_is_gate_only():
+    # evaluator_fn 미지정 → 게이트만으로 green(하위호환).
+    res = harness_loop("t", FakeAgent(), lambda: (True, "ok"), max_iters=5)
+    assert res.status == "green"
+    assert res.iterations == 1
+
+
+def test_gate_fail_then_evaluator_revise_then_green():
+    # 게이트 실패 → 통과 후 evaluator revise → 통과+accept. 두 종류 사유가 섞여도 동작.
+    gate = _gate_fail_then_pass(2)  # 1회 실패, 이후 통과
+    ev = _eval_revise_then_accept(2)  # 첫 통과 때 revise, 다음에 accept
+    res = harness_loop("t", FakeAgent(), gate, ev, max_iters=5)
+    assert res.status == "green"
+    assert res.iterations == 3
+
+
+def test_parse_verdict():
+    from harness.loop import parse_verdict
+
+    assert parse_verdict("리뷰...\n판정: ACCEPT")[0] is True
+    assert parse_verdict("이유...\n판정: REVISE")[0] is False
+    assert parse_verdict("마커 없음")[0] is False  # 기본 회의적(REVISE)
+    assert parse_verdict("판정: REVISE\n다시\n판정: ACCEPT")[0] is True  # 마지막이 최종
+
+
+def test_build_eval_prompt():
+    from harness.loop import build_eval_prompt
+
+    p = build_eval_prompt("작업X", "gate-출력-log")
+    assert "작업X" in p
+    assert "gate-출력-log" in p  # 게이트 출력을 컨텍스트로 포함
+    assert "ACCEPT" in p and "REVISE" in p
+    assert "의심" in p  # refute-first
+
+
 # ── main() 안전성: git·gh 를 모킹해 실제 PR 이 만들어지는 조건을 못박는다 ──
 
 
@@ -115,6 +200,8 @@ def _wire(monkeypatch, tree_states, gate_result):
     monkeypatch.setattr(loop, "_git", lambda *a: git_calls.append(a))
     monkeypatch.setattr(loop, "run_agent", lambda task, feedback: None)
     monkeypatch.setattr(loop, "run_gates", lambda: gate_result)
+    # 기본은 evaluator accept — main() 흐름이 게이트 통과 시 그대로 커밋/PR로 가게.
+    monkeypatch.setattr(loop, "run_evaluator", lambda task, gate_out: (True, "accept"))
     monkeypatch.setattr(loop.subprocess, "run", lambda *a, **k: gh_calls.append(a[0]))
     return git_calls, gh_calls
 
@@ -161,3 +248,15 @@ def test_main_aborts_on_dirty_tree(monkeypatch):
 def test_max_iters_must_be_positive():
     with pytest.raises(SystemExit):  # argparse.error → SystemExit
         loop.main(["prog", "t", "--max-iters", "0"])
+
+
+def test_main_skips_evaluator_with_flag(monkeypatch):
+    # --no-evaluator 면 run_evaluator 를 호출하지 않는다(호출 시 실패하도록 심어 검증).
+    git_calls, _ = _wire(monkeypatch, [False, True], (True, "ok"))
+
+    def _boom(*a):
+        raise AssertionError("--no-evaluator 인데 evaluator 가 불렸다")
+
+    monkeypatch.setattr(loop, "run_evaluator", _boom)
+    assert loop.main(["prog", "t", "--no-evaluator"]) == 0
+    assert any("commit" in a for a in git_calls)  # 게이트만으로 커밋까지 감
